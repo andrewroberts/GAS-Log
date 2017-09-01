@@ -4,7 +4,7 @@
 // Unit Tests: 22 March 2015 08:50 GMT
 
 /*
- * Copyright (C) 2015 Andrew Roberts (andrew@roberts.net)
+ * Copyright (C) 2015-2017 Andrew Roberts (andrew@roberts.net)
  * 
  * This program is free software: you can redistribute it and/or modify it under
  * the terms of the GNU General Public License as published by the Free Software
@@ -50,45 +50,24 @@ var Level = BetterLog.Level;
 
 // Enum for whether or not to output the calling function's name
 var DisplayFunctionNames = Object.freeze({
-  YES: true,
-  NO: false
+  YES : true,
+  NO  : false
 });
 
-// Enum for whether or not to output a temporary user id
+// Enum for Outputting a user id
 var DisplayUserId = Object.freeze({
-  YES: true,
-  NO: false
+  USER_KEY_HIDE : 'USER_KEY_HIDE', // Display the active user key but hide most of the chars
+  USER_KEY_FULL : 'USER_KEY_FULL', // Display the full active user key
+  EMAIL_HIDE    : 'EMAIL_HIDE',    // Display the active user email but hide the user name
+  EMAIL_FULL    : 'EMAIL_FULL',    // Display the full active user email
+  NONE          : 'NONE'           // Do not display user ID 
 });
-
-// Class for passing options to init()
-function InitOptions() {
-
-  // Level of logging to be output
-  this.level = Level.OFF;
-  
-  // log sheet id (will use one called 'Log')  
-  this.sheetId = ''; 
-  
-  // Specify log sheet name  
-  this.sheetName = 'Log'; 
-  
-  // Display calling function names  
-  this.displayFunctionNames = DisplayFunctionNames.NO; 
-  
-  // Whether a user ID should be output
-  this.displayUserId = DisplayUserId.NO;
-  
-} // InitOptions()
 
 // Private Properties
 // ------------------
 
-// Local copy of the inital options
-var initOptions_ = new InitOptions();
-
+var initOptions_= {};
 var thisApp_ = this;
-
-var userId_;
 
 // Public Methods
 // --------------
@@ -101,29 +80,50 @@ var userId_;
 
 function init(initOptions) {
 
-  var key;
+  initOptions_.level                = Level.OFF;               // Level of logging to be output  
+  initOptions_.sheetId              = '';                      // log sheet id (will use one called 'Log')  
+  initOptions_.sheetName            = '';                      // Specify log sheet name  
+  initOptions_.displayFunctionNames = DisplayFunctionNames.NO; // Display calling function names  
+  initOptions_.displayUserId        = DisplayUserId.NONE;      // Whether a user ID should be output
+  initOptions_.firebaseUrl          = null;                    // Firebase url
+  initOptions_.firebaseSecret       = null;                    // Firebase secret
+  initOptions_.lock                 = null;                    // Lock service 
 
-  if (typeof initOptions !== 'undefined') {
-  
-    for (key in initOptions) {
-
+  if (typeof initOptions === 'object') {
+    for (var key in initOptions) {
       if (initOptions.hasOwnProperty(key)) {      
         initOptions_[key] = initOptions[key];
       }
     }
   }
 
+  if (initOptions_.level === Level.OFF) {
+    return;
+  }
+
+  if (initOptions_.lock === null) {
+    throw new Error('You have to specify a lock service, e.g. LockService.getScriptLock()')
+  }
+
+  BetterLog.storeLock(initOptions_.lock)
+
   BetterLog.setLevel(initOptions_.level);
-  
-  if (initOptions_.level !== Level.OFF) {
-    BetterLog.useSpreadsheet(initOptions_.sheetId, initOptions_.sheetName);
+    
+  if (initOptions_.firebaseUrl !== null) {
+    
+    // Firebase has to come first, so that if it isn't used and 
+    // the sheet ID isn't specified this is passed to BetterLog and the 
+    // active sheet is used
+    BetterLog.useFirebase(initOptions_.firebaseUrl, initOptions_.firebaseSecret)
+    
+  } else {
+    
+    BetterLog.useSpreadsheet(initOptions_.sheetId, initOptions_.sheetName); 
   }
   
-  if (initOptions.displayUserId) {
-    userId_ = Session.getTemporaryActiveUserKey()
-  }
+  BetterLog.storeUserId(initOptions.displayUserId)
   
-} // init
+} // init()
   
 /**
  * Message for user. Critical error that stops the script. Back out or throw 
@@ -265,28 +265,11 @@ function blConfig(message, options) {
 }
 
 /**
- * Clear the debug log sheet
+ * Clear the debug log 
  */
    
 function clear() {
-
-  if (initOptions_.sheetId !== '') {
-  
-    SpreadsheetApp
-      .openById(initOptions_.sheetId)
-      .getSheetByName(initOptions_.sheetName)
-      .clearContents();
-  
-  } else {
-  
-    SpreadsheetApp
-      .getActiveSpreadsheet()
-      .getSheetByName(initOptions_.sheetName)
-      .clearContents();
-  }
-  
-  SpreadsheetApp.flush()
-  
+  BetterLog.clear()
 } // clear()
     
 // Private Methods
@@ -303,7 +286,7 @@ function clear() {
  
 function format_(logFunction, message) {
   
-  var hyphen = ' - ';
+  var hyphenl
   var callingfunctionName = '';
   
   if (initOptions_.level === Level.OFF) {
@@ -311,6 +294,8 @@ function format_(logFunction, message) {
   }
   
   if (initOptions_.displayFunctionNames) {
+
+    var hyphen = ' - ';
 
     callingfunctionName = getFunctionName() + '()';
 
@@ -322,15 +307,13 @@ function format_(logFunction, message) {
     
   } else {
   
+    hyphen = (initOptions_.firebaseUrl === null) ? '- ' : ''; // Remove the first space as that is added by BetterLog
+  
     if (typeof message === 'undefined' || message === '') {
     
       // All variables are ignored
       logFunction = function() {};
     }
-  }
-  
-  if (initOptions_.displayUserId) {
-    message = userId_ + ' - ' + message
   }
   
   logFunction(callingfunctionName + hyphen + message);
